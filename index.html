@@ -122,8 +122,8 @@
   <header>
     <h1>ZDV &mdash; Denver Center Enroute Sectors</h1>
     <div class="toggle-group">
-      <button id="btn-low" class="active" onclick="showBand('low')">Low (SFC&ndash;FL260)</button>
-      <button id="btn-high" onclick="showBand('high')">High (FL270&ndash;FL600)</button>
+      <button id="btn-high" class="active" onclick="showBand('high')">High (FL270&ndash;FL600)</button>
+      <button id="btn-low" onclick="showBand('low')">Low (SFC&ndash;FL260)</button>
       <button id="btn-both" onclick="showBand('both')">Both</button>
     </div>
     <div class="legend">
@@ -267,7 +267,7 @@
         highLayer = high.layer;
         labelLayers = { low: low.labels, high: high.labels };
 
-        showBand('low');
+        showBand('high');
       })
       .catch(err => {
         console.error('Failed to load zdv.geojson:', err);
