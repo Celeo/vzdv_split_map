@@ -66,10 +66,18 @@
     .legend {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 10px;
       margin-left: auto;
       font-size: 0.78rem;
       color: #888;
+      flex-wrap: wrap;
+    }
+
+    .legend-label {
+      color: #666;
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
     }
 
     .legend-item {
@@ -82,7 +90,7 @@
       width: 14px;
       height: 14px;
       border-radius: 2px;
-      opacity: 0.7;
+      opacity: 0.75;
       border: 1px solid rgba(255,255,255,0.2);
     }
 
@@ -103,18 +111,26 @@
 
     .sector-popup {
       font-size: 0.9rem;
-      line-height: 1.6;
+      line-height: 1.7;
+      min-width: 150px;
     }
 
-    .sector-popup .sector-id {
-      font-size: 1.2rem;
+    .sector-popup .sector-title {
+      font-size: 1.15rem;
       font-weight: 700;
       color: #7eb8f7;
+      margin-bottom: 2px;
     }
 
-    .sector-popup .sector-band {
-      font-size: 0.75rem;
+    .sector-popup .sector-meta {
+      font-size: 0.78rem;
       color: #aaa;
+    }
+
+    .sector-popup .sector-freq {
+      font-size: 0.85rem;
+      color: #ccc;
+      font-family: monospace;
     }
   </style>
 </head>
@@ -126,21 +142,69 @@
       <button id="btn-low" onclick="showBand('low')">Low (SFC&ndash;FL260)</button>
       <button id="btn-both" onclick="showBand('both')">Both</button>
     </div>
-    <div class="legend">
-      <div class="legend-item">
-        <div class="legend-swatch" style="background:#4fc3f7;"></div>
-        <span>Low</span>
-      </div>
-      <div class="legend-item">
-        <div class="legend-swatch" style="background:#ff8a65;"></div>
-        <span>High</span>
-      </div>
-    </div>
+    <div class="legend" id="legend"></div>
   </header>
   <div id="map"></div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
+    // Area colors — consistent across high and low bands
+    const AREA_COLORS = {
+      1: '#ef5350',  // red       (low only)
+      2: '#66bb6a',  // green
+      3: '#ffa726',  // orange
+      4: '#42a5f5',  // blue      (high only)
+      5: '#e91e63',  // pink
+      6: '#fdd835',  // yellow
+    };
+
+    const AREA_NAMES = {
+      1: 'Area 1', 2: 'Area 2', 3: 'Area 3',
+      4: 'Area 4', 5: 'Area 5', 6: 'Area 6',
+    };
+
+    // Source: VATSIM ZDV vERAM Enroute SOP, Section 4
+    const SECTOR_INFO = {
+      low: {
+        6:  { name: 'RLG',   area: 1, freq: '128.65' },
+        7:  { name: 'TXC',   area: 2, freq: '133.95' },
+        11: { name: 'GJT',   area: 1, freq: '120.47' },
+        12: { name: 'GUC',   area: 1, freq: '125.35' },
+        13: { name: 'TOMSN', area: 1, freq: '126.50' },
+        15: { name: 'SNY',   area: 5, freq: '118.47' },
+        19: { name: 'LBF',   area: 2, freq: '132.50' },
+        21: { name: 'CYS',   area: 6, freq: '125.90' },
+        22: { name: 'CPR',   area: 6, freq: '132.10' },
+        26: { name: 'POWDR', area: 1, freq: '119.85' },
+        27: { name: 'LHX',   area: 3, freq: '133.40' },
+        31: { name: 'RAP',   area: 5, freq: '127.95' },
+        36: { name: 'FMN',   area: 1, freq: '118.57' },
+        41: { name: 'PUB',   area: 3, freq: '128.37' },
+        68: { name: 'TBC',   area: 1, freq: '127.55' },
+        77: { name: 'UFN',   area: 1, freq: null },
+      },
+      high: {
+        3:  { name: 'EKR',   area: 6, freq: '126.725' },
+        4:  { name: 'GJT',   area: 6, freq: '135.125' },
+        5:  { name: 'RLG',   area: 6, freq: '132.850' },
+        8:  { name: 'HCT',   area: 2, freq: '127.025' },
+        9:  { name: 'LBF',   area: 5, freq: '126.325' },
+        14: { name: 'CHE',   area: 6, freq: '128.325' },
+        16: { name: 'DEN',   area: 5, freq: '120.575' },
+        17: { name: 'HLC',   area: 2, freq: '127.650' },
+        23: { name: 'TBC',   area: 4, freq: '118.225' },
+        25: { name: 'HBU',   area: 4, freq: '133.525' },
+        28: { name: 'LAA',   area: 3, freq: '134.125' },
+        29: { name: 'PUB',   area: 3, freq: '132.225' },
+        32: { name: 'RAP',   area: 5, freq: '133.675' },
+        33: { name: 'BFF',   area: 5, freq: '134.575' },
+        34: { name: 'MBW',   area: 6, freq: '133.175' },
+        35: { name: 'BRUIT', area: 5, freq: '135.025' },
+        37: { name: 'FMN',   area: 4, freq: '125.675' },
+        61: { name: 'FOF',   area: 2, freq: '126.875' },
+      },
+    };
+
     const map = L.map('map', {
       center: [40.5, -104.5],
       zoom: 6,
@@ -153,80 +217,59 @@
       maxZoom: 19,
     }).addTo(map);
 
-    // Distinct color palettes for low and high sectors
-    const LOW_COLORS = [
-      '#4fc3f7','#81d4fa','#29b6f6','#0288d1',
-      '#00acc1','#26c6da','#4dd0e1','#80cbc4',
-      '#4db6ac','#26a69a','#00897b','#00bcd4',
-      '#039be5','#0097a7','#006064','#006978',
-    ];
-
-    const HIGH_COLORS = [
-      '#ff8a65','#ffab91','#ff7043','#e64a19',
-      '#ffcc02','#ffb300','#ffa000','#ff8f00',
-      '#ef9a9a','#e57373','#ef5350','#f44336',
-      '#ce93d8','#ba68c8','#ab47bc','#9c27b0',
-      '#f48fb1','#f06292','#ec407a','#e91e63','#c2185b',
-    ];
-
     let lowLayer = null;
     let highLayer = null;
-    let labelLayers = [];
-    let currentBand = 'low';
-
-    function sectorColor(band, index) {
-      const palette = band === 'low' ? LOW_COLORS : HIGH_COLORS;
-      return palette[index % palette.length];
-    }
+    let labelLayers = { low: [], high: [] };
+    let currentBand = 'high';
 
     function polygonCentroid(coords) {
-      // Simple average centroid of exterior ring
       const ring = coords[0];
       let lat = 0, lng = 0;
-      for (const [lo, la] of ring) {
-        lng += lo;
-        lat += la;
-      }
+      for (const [lo, la] of ring) { lng += lo; lat += la; }
       return [lat / ring.length, lng / ring.length];
     }
 
     function buildLayer(features, band) {
       const labels = [];
-      // Group features by id for display purposes
-      const seen = {};
 
       const layer = L.geoJSON({ type: 'FeatureCollection', features }, {
         style: (feature) => {
-          const id = feature.properties.id;
-          if (!(id in seen)) seen[id] = Object.keys(seen).length;
-          const color = sectorColor(band, seen[id]);
+          const info = SECTOR_INFO[band][feature.properties.id];
+          const color = info ? AREA_COLORS[info.area] : '#888';
           return {
             color: '#fff',
             weight: 1,
-            opacity: 0.5,
+            opacity: 0.45,
             fillColor: color,
-            fillOpacity: 0.25,
+            fillOpacity: 0.28,
           };
         },
         onEachFeature: (feature, lyr) => {
           const { id, alt_lo, alt_hi } = feature.properties;
+          const info = SECTOR_INFO[band][id] || {};
           const flLo = alt_lo === 0 ? 'SFC' : `FL${String(alt_lo).padStart(3,'0')}`;
           const flHi = `FL${String(alt_hi).padStart(3,'0')}`;
+          const bandLabel = band === 'high' ? 'H' : 'L';
+          const areaColor = info.area ? AREA_COLORS[info.area] : '#888';
 
-          lyr.on('mouseover', function () {
-            lyr.setStyle({ fillOpacity: 0.55, weight: 2, opacity: 0.9 });
-          });
-          lyr.on('mouseout', function () {
-            lyr.setStyle({ fillOpacity: 0.25, weight: 1, opacity: 0.5 });
-          });
+          lyr.on('mouseover', () => lyr.setStyle({ fillOpacity: 0.6, weight: 2, opacity: 0.95 }));
+          lyr.on('mouseout',  () => lyr.setStyle({ fillOpacity: 0.28, weight: 1, opacity: 0.45 }));
+
+          const freqLine = info.freq
+            ? `<div class="sector-freq">${info.freq}</div>`
+            : (id === 77 ? `<div class="sector-meta">Combined w/ 11 UFN</div>` : '');
+
           lyr.bindPopup(`
             <div class="sector-popup">
-              <div class="sector-id">ZDV ${id}</div>
-              <div class="sector-band">${flLo} &ndash; ${flHi}</div>
+              <div class="sector-title" style="color:${areaColor}">
+                ${id}${info.name ? `&ndash;${info.name}` : ''}-${bandLabel}
+              </div>
+              <div class="sector-meta">${flLo} &ndash; ${flHi}</div>
+              ${info.area ? `<div class="sector-meta">${AREA_NAMES[info.area]}</div>` : ''}
+              ${freqLine}
             </div>
           `);
 
-          // Place a label at centroid
           const coords = feature.geometry.coordinates;
           const [lat, lng] = polygonCentroid(coords);
           const label = L.marker([lat, lng], {
@@ -234,14 +277,16 @@
               className: '',
               html: `<div style="
                 color:#fff;
-                font-size:11px;
+                font-size:10px;
                 font-weight:700;
                 font-family:-apple-system,sans-serif;
                 text-shadow:0 0 3px #000,0 0 6px #000,0 0 10px #000;
                 white-space:nowrap;
                 pointer-events:none;
                 transform:translate(-50%,-50%);
-              ">${id}</div>`,
+                text-align:center;
+                line-height:1.3;
+              ">${id}${info.name ? `<br><span style="font-size:9px;opacity:0.85">${info.name}</span>` : ''}</div>`,
               iconSize: [0, 0],
               iconAnchor: [0, 0],
             }),
@@ -254,16 +299,45 @@
       return { layer, labels };
     }
 
+    function buildLegend(band) {
+      const legend = document.getElementById('legend');
+      legend.innerHTML = '';
+
+      const areasInBand = new Set();
+      const infoMap = SECTOR_INFO[band] || {};
+      if (band === 'both') {
+        Object.values(SECTOR_INFO.low).forEach(i => areasInBand.add(i.area));
+        Object.values(SECTOR_INFO.high).forEach(i => areasInBand.add(i.area));
+      } else {
+        Object.values(infoMap).forEach(i => areasInBand.add(i.area));
+      }
+
+      const label = document.createElement('span');
+      label.className = 'legend-label';
+      label.textContent = 'Areas:';
+      legend.appendChild(label);
+
+      [...areasInBand].sort().forEach(area => {
+        const item = document.createElement('div');
+        item.className = 'legend-item';
+        item.innerHTML = `
+          <div class="legend-swatch" style="background:${AREA_COLORS[area]};"></div>
+          <span>${area}</span>
+        `;
+        legend.appendChild(item);
+      });
+    }
+
     fetch('zdv.geojson')
       .then(r => r.json())
       .then(data => {
-        const lowFeatures = data.features.filter(f => f.properties.alt_hi <= 260);
+        const lowFeatures  = data.features.filter(f => f.properties.alt_hi <= 260);
         const highFeatures = data.features.filter(f => f.properties.alt_lo >= 270);
 
-        const low = buildLayer(lowFeatures, 'low');
+        const low  = buildLayer(lowFeatures,  'low');
         const high = buildLayer(highFeatures, 'high');
 
-        lowLayer = low.layer;
+        lowLayer  = low.layer;
         highLayer = high.layer;
         labelLayers = { low: low.labels, high: high.labels };
 
@@ -277,18 +351,10 @@
       });
 
     function clearMap() {
-      if (lowLayer) map.removeLayer(lowLayer);
+      if (lowLayer)  map.removeLayer(lowLayer);
       if (highLayer) map.removeLayer(highLayer);
       for (const band of ['low', 'high']) {
-        if (labelLayers[band]) {
-          labelLayers[band].forEach(l => map.removeLayer(l));
-        }
-      }
-    }
-
-    function addLabels(band) {
-      if (labelLayers[band]) {
-        labelLayers[band].forEach(l => l.addTo(map));
+        labelLayers[band].forEach(l => map.removeLayer(l));
       }
     }
 
@@ -296,18 +362,14 @@
       currentBand = band;
       clearMap();
 
-      document.getElementById('btn-low').classList.toggle('active', band === 'low' || band === 'both');
+      document.getElementById('btn-low').classList.toggle('active',  band === 'low'  || band === 'both');
       document.getElementById('btn-high').classList.toggle('active', band === 'high' || band === 'both');
       document.getElementById('btn-both').classList.toggle('active', band === 'both');
 
-      if ((band === 'low' || band === 'both') && lowLayer) {
-        lowLayer.addTo(map);
-        addLabels('low');
-      }
-      if ((band === 'high' || band === 'both') && highLayer) {
-        highLayer.addTo(map);
-        addLabels('high');
-      }
+      if ((band === 'low'  || band === 'both') && lowLayer)  { lowLayer.addTo(map);  labelLayers.low.forEach(l  => l.addTo(map)); }
+      if ((band === 'high' || band === 'both') && highLayer) { highLayer.addTo(map); labelLayers.high.forEach(l => l.addTo(map)); }
+
+      buildLegend(band);
     }
   </script>
 </body>
