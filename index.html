@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ZDV Enroute Sectors</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #1a1a2e;
+      color: #e0e0e0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 10px 16px;
+      background: #16213e;
+      border-bottom: 1px solid #0f3460;
+      flex-shrink: 0;
+      flex-wrap: wrap;
+    }
+
+    header h1 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      color: #e0e0e0;
+    }
+
+    .toggle-group {
+      display: flex;
+      border-radius: 6px;
+      overflow: hidden;
+      border: 1px solid #0f3460;
+    }
+
+    .toggle-group button {
+      padding: 6px 18px;
+      border: none;
+      background: #1a1a2e;
+      color: #aaa;
+      font-size: 0.85rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .toggle-group button.active {
+      background: #0f3460;
+      color: #fff;
+    }
+
+    .toggle-group button:hover:not(.active) {
+      background: #222244;
+      color: #ddd;
+    }
+
+    .legend {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-left: auto;
+      font-size: 0.78rem;
+      color: #888;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .legend-swatch {
+      width: 14px;
+      height: 14px;
+      border-radius: 2px;
+      opacity: 0.7;
+      border: 1px solid rgba(255,255,255,0.2);
+    }
+
+    #map {
+      flex: 1;
+    }
+
+    .leaflet-popup-content-wrapper {
+      background: #16213e;
+      color: #e0e0e0;
+      border: 1px solid #0f3460;
+      border-radius: 6px;
+    }
+
+    .leaflet-popup-tip {
+      background: #16213e;
+    }
+
+    .sector-popup {
+      font-size: 0.9rem;
+      line-height: 1.6;
+    }
+
+    .sector-popup .sector-id {
+      font-size: 1.2rem;
+      font-weight: 700;
+      color: #7eb8f7;
+    }
+
+    .sector-popup .sector-band {
+      font-size: 0.75rem;
+      color: #aaa;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>ZDV &mdash; Denver Center Enroute Sectors</h1>
+    <div class="toggle-group">
+      <button id="btn-low" class="active" onclick="showBand('low')">Low (SFC&ndash;FL260)</button>
+      <button id="btn-high" onclick="showBand('high')">High (FL270&ndash;FL600)</button>
+      <button id="btn-both" onclick="showBand('both')">Both</button>
+    </div>
+    <div class="legend">
+      <div class="legend-item">
+        <div class="legend-swatch" style="background:#4fc3f7;"></div>
+        <span>Low</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-swatch" style="background:#ff8a65;"></div>
+        <span>High</span>
+      </div>
+    </div>
+  </header>
+  <div id="map"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const map = L.map('map', {
+      center: [40.5, -104.5],
+      zoom: 6,
+      zoomControl: true,
+    });
+
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/">CARTO</a>',
+      subdomains: 'abcd',
+      maxZoom: 19,
+    }).addTo(map);
+
+    // Distinct color palettes for low and high sectors
+    const LOW_COLORS = [
+      '#4fc3f7','#81d4fa','#29b6f6','#0288d1',
+      '#00acc1','#26c6da','#4dd0e1','#80cbc4',
+      '#4db6ac','#26a69a','#00897b','#00bcd4',
+      '#039be5','#0097a7','#006064','#006978',
+    ];
+
+    const HIGH_COLORS = [
+      '#ff8a65','#ffab91','#ff7043','#e64a19',
+      '#ffcc02','#ffb300','#ffa000','#ff8f00',
+      '#ef9a9a','#e57373','#ef5350','#f44336',
+      '#ce93d8','#ba68c8','#ab47bc','#9c27b0',
+      '#f48fb1','#f06292','#ec407a','#e91e63','#c2185b',
+    ];
+
+    let lowLayer = null;
+    let highLayer = null;
+    let labelLayers = [];
+    let currentBand = 'low';
+
+    function sectorColor(band, index) {
+      const palette = band === 'low' ? LOW_COLORS : HIGH_COLORS;
+      return palette[index % palette.length];
+    }
+
+    function polygonCentroid(coords) {
+      // Simple average centroid of exterior ring
+      const ring = coords[0];
+      let lat = 0, lng = 0;
+      for (const [lo, la] of ring) {
+        lng += lo;
+        lat += la;
+      }
+      return [lat / ring.length, lng / ring.length];
+    }
+
+    function buildLayer(features, band) {
+      const labels = [];
+      // Group features by id for display purposes
+      const seen = {};
+
+      const layer = L.geoJSON({ type: 'FeatureCollection', features }, {
+        style: (feature) => {
+          const id = feature.properties.id;
+          if (!(id in seen)) seen[id] = Object.keys(seen).length;
+          const color = sectorColor(band, seen[id]);
+          return {
+            color: '#fff',
+            weight: 1,
+            opacity: 0.5,
+            fillColor: color,
+            fillOpacity: 0.25,
+          };
+        },
+        onEachFeature: (feature, lyr) => {
+          const { id, alt_lo, alt_hi } = feature.properties;
+          const flLo = alt_lo === 0 ? 'SFC' : `FL${String(alt_lo).padStart(3,'0')}`;
+          const flHi = `FL${String(alt_hi).padStart(3,'0')}`;
+
+          lyr.on('mouseover', function () {
+            lyr.setStyle({ fillOpacity: 0.55, weight: 2, opacity: 0.9 });
+          });
+          lyr.on('mouseout', function () {
+            lyr.setStyle({ fillOpacity: 0.25, weight: 1, opacity: 0.5 });
+          });
+          lyr.bindPopup(`
+            <div class="sector-popup">
+              <div class="sector-id">ZDV ${id}</div>
+              <div class="sector-band">${flLo} &ndash; ${flHi}</div>
+            </div>
+          `);
+
+          // Place a label at centroid
+          const coords = feature.geometry.coordinates;
+          const [lat, lng] = polygonCentroid(coords);
+          const label = L.marker([lat, lng], {
+            icon: L.divIcon({
+              className: '',
+              html: `<div style="
+                color:#fff;
+                font-size:11px;
+                font-weight:700;
+                font-family:-apple-system,sans-serif;
+                text-shadow:0 0 3px #000,0 0 6px #000,0 0 10px #000;
+                white-space:nowrap;
+                pointer-events:none;
+                transform:translate(-50%,-50%);
+              ">${id}</div>`,
+              iconSize: [0, 0],
+              iconAnchor: [0, 0],
+            }),
+            interactive: false,
+          });
+          labels.push(label);
+        },
+      });
+
+      return { layer, labels };
+    }
+
+    fetch('zdv.geojson')
+      .then(r => r.json())
+      .then(data => {
+        const lowFeatures = data.features.filter(f => f.properties.alt_hi <= 260);
+        const highFeatures = data.features.filter(f => f.properties.alt_lo >= 270);
+
+        const low = buildLayer(lowFeatures, 'low');
+        const high = buildLayer(highFeatures, 'high');
+
+        lowLayer = low.layer;
+        highLayer = high.layer;
+        labelLayers = { low: low.labels, high: high.labels };
+
+        showBand('low');
+      })
+      .catch(err => {
+        console.error('Failed to load zdv.geojson:', err);
+        document.querySelector('header').insertAdjacentHTML('beforeend',
+          '<span style="color:#f44;font-size:0.8rem;">Error loading GeoJSON</span>'
+        );
+      });
+
+    function clearMap() {
+      if (lowLayer) map.removeLayer(lowLayer);
+      if (highLayer) map.removeLayer(highLayer);
+      for (const band of ['low', 'high']) {
+        if (labelLayers[band]) {
+          labelLayers[band].forEach(l => map.removeLayer(l));
+        }
+      }
+    }
+
+    function addLabels(band) {
+      if (labelLayers[band]) {
+        labelLayers[band].forEach(l => l.addTo(map));
+      }
+    }
+
+    function showBand(band) {
+      currentBand = band;
+      clearMap();
+
+      document.getElementById('btn-low').classList.toggle('active', band === 'low' || band === 'both');
+      document.getElementById('btn-high').classList.toggle('active', band === 'high' || band === 'both');
+      document.getElementById('btn-both').classList.toggle('active', band === 'both');
+
+      if ((band === 'low' || band === 'both') && lowLayer) {
+        lowLayer.addTo(map);
+        addLabels('low');
+      }
+      if ((band === 'high' || band === 'both') && highLayer) {
+        highLayer.addTo(map);
+        addLabels('high');
+      }
+    }
+  </script>
+</body>
+</html>
